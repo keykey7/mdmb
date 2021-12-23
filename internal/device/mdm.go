@@ -2,6 +2,7 @@ package device
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -19,6 +20,8 @@ func (c *MDMClient) authenticate() error {
 		MessageType: "Authenticate",
 		Topic:       c.MDMPayload.Topic,
 		UDID:        c.Device.UDID,
+		// TODO: requires Model, ModelName, EnrollmentID
+		//       https://developer.apple.com/documentation/devicemanagement/authenticaterequest
 
 		// non-required fields
 		SerialNumber: c.Device.Serial,
@@ -67,6 +70,9 @@ type ConnectRequest struct {
 
 // Generates "SignMessage" HTTP header data
 func (c *MDMClient) mdmP7Sign(body []byte) (string, error) {
+	if !c.MDMPayload.SignMessage {
+		return "", nil
+	}
 	if c.IdentityCertificate == nil || c.IdentityPrivateKey == nil {
 		return "", errors.New("device identity invalid")
 	}
@@ -99,6 +105,23 @@ type TokenUpdateRequest struct {
 	UserLongName          string `plist:",omitempty"`
 }
 
+func (c *MDMClient) newClient() *http.Client {
+	clientCert := tls.Certificate{
+		Certificate: [][]byte{c.IdentityCertificate.Raw},
+		PrivateKey:  c.IdentityPrivateKey,
+		Leaf:        c.IdentityCertificate,
+	}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+			Renegotiation:      tls.RenegotiateOnceAsClient,
+			Certificates:       []tls.Certificate{clientCert},
+		},
+	}
+	client := &http.Client{Transport: tr}
+	return client
+}
+
 func (c *MDMClient) checkinRequest(i interface{}) error {
 	plistBytes, err := plist.Marshal(i)
 	if err != nil {
@@ -115,27 +138,30 @@ func (c *MDMClient) checkinRequest(i interface{}) error {
 		ciURL = c.MDMPayload.ServerURL
 	}
 
-	client := &http.Client{}
+	client := c.newClient()
 	req, err := http.NewRequest("PUT", ciURL, bytes.NewReader(plistBytes))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Mdm-Signature", mdmSig)
+	if mdmSig != "" {
+		req.Header.Set("Mdm-Signature", mdmSig)
+	}
 	req.Header.Set("Content-Type", "application/x-apple-aspen-mdm-checkin")
 
+	fmt.Printf("PUT %s -> %s", ciURL, plistBytes)
 	res, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
 
-	_, err = ioutil.ReadAll(res.Body)
+	bodyArr, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return err
 	}
 
 	if res.StatusCode != 200 {
-		return fmt.Errorf("Checkin request failed with HTTP status: %d", res.StatusCode)
+		return fmt.Errorf("checkin request failed: %v: %s", res, bodyArr)
 	}
 
 	return nil
@@ -166,7 +192,7 @@ func (c *MDMClient) Connect() error {
 		UDID:   c.Device.UDID,
 		Status: "Idle",
 	}
-	client := &http.Client{}
+	client := c.newClient()
 	return c.connect(client, req)
 }
 
@@ -199,7 +225,9 @@ func (c *MDMClient) connect(client *http.Client, connReq interface{}) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Mdm-Signature", mdmSig)
+	if mdmSig != "" {
+		req.Header.Set("Mdm-Signature", mdmSig)
+	}
 
 	respBytes, res, err := httpRequestBytes(client, req)
 	if err != nil {
@@ -211,7 +239,8 @@ func (c *MDMClient) connect(client *http.Client, connReq interface{}) error {
 	}
 
 	if len(respBytes) == 0 {
-		return nil
+		// HACK: return nil
+		return fmt.Errorf("connect Request failed with empty body: %v", res)
 	}
 
 	resp := &ConnectResponse{}

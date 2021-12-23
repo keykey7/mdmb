@@ -193,6 +193,10 @@ func scepNewPKCSReq(csrBytes []byte, url, challenge, caMessage string, fingerpri
 		return nil, err
 	}
 	ctx := context.Background()
+
+	// HACK: mvk
+	caMessage = ""
+
 	resp, certNum, err := cl.GetCACert(ctx, caMessage)
 	if err != nil {
 		return nil, err
@@ -221,6 +225,8 @@ func scepNewPKCSReq(csrBytes []byte, url, challenge, caMessage string, fingerpri
 		hashType = crypto.SHA1
 	case 32:
 		hashType = crypto.SHA256
+		// case 64:
+		//	hashType = crypto.SHA512
 	}
 	if hashType != 0 {
 		selector = scep.FingerprintCertsSelector(hashType, fingerprint)
@@ -267,7 +273,7 @@ func scepNewPKCSReq(csrBytes []byte, url, challenge, caMessage string, fingerpri
 	}
 
 	if respMsg.PKIStatus != scep.SUCCESS {
-		return nil, fmt.Errorf("PKCSReq request failed, failInfo: %s", respMsg.FailInfo)
+		return nil, fmt.Errorf("PKCSReq request failed: %+v", respMsg)
 	}
 
 	logger.Log("pkiStatus", "SUCCESS", "msg", "server returned a certificate.")

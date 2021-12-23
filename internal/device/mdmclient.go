@@ -87,9 +87,6 @@ func (c *MDMClient) enroll(profileID string) error {
 	if c.MDMPayload == nil {
 		return errors.New("no MDM payload")
 	}
-	if !c.MDMPayload.SignMessage {
-		return errors.New("non-SignMessage (mTLS) enrollment not supported")
-	}
 
 	err := c.authenticate()
 	if err != nil {

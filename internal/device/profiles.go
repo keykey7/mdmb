@@ -285,6 +285,12 @@ func (device *Device) installSCEPPayload(profileID string, scepPayload *cfgprofi
 		return "", err
 	}
 
+	existingUuid, err := device.SystemProfileStore().loadPayloadRefString(profileID, &scepPayload.Payload, "keychain_identity")
+	if err == nil {
+		fmt.Printf("reusing existing (pending?) uuid %v\n", existingUuid)
+		return existingUuid, nil
+	}
+
 	cert, err := scepNewPKCSReq(
 		csrBytes,
 		scepPayload.PayloadContent.URL,
